@@ -45,6 +45,11 @@ The grading testbench guarantees the accumulator value never exceeds the
 signed 28-bit range, so accumulator wrap behavior is unspecified and need
 not be handled.
 
+`clr` and `en` are independent bits — all four combinations of
+`{clr, en}` must produce distinct `acc` next-state behavior, exactly as
+given in the table above. In particular, `clr=1, en=1` must not be
+treated the same as `clr=1, en=0`.
+
 ## 4. Readout path
 
 Asserting `rd` in cycle *t* requests a snapshot readout.
@@ -77,30 +82,20 @@ Back-to-back `rd` cycles are permitted and each takes its own snapshot.
 
 Worked examples (`snapshot → res`):
 
-| snapshot | q  | r   | res | note                      |
-|----------|----|-----|-----|---------------------------|
-| 640      | 2  | 128 | 2   | tie, q even → stays       |
-| 896      | 3  | 128 | 4   | tie, q odd → rounds up    |
-| −384     | −2 | 128 | −2  | tie, q even → stays       |
 
-**Implementation note — one cycle of latency, not two.** The full readout
-path — from sampling `rd` to `res_valid` pulsing — must add exactly one
-clock cycle of latency: if `rd` is sampled at cycle *N*, `res_valid` must
-be 1 and `res` must hold the correct rounded/saturated value at cycle
-*N+1*, never *N+2* or later.
+| snapshot   | q      | r   | res              | note                                          |
+|------------|--------|-----|------------------|-------------------------------------------------|
+| 640        | 2      | 128 | 2                | tie, q even → stays                            |
+| 896        | 3      | 128 | 4                | tie, q odd → rounds up                         |
+| −384       | −2     | 128 | −2               | tie, q even → stays                            |
+| 8388480    | 32767  | 128 | 32767            | tie, q odd → rounds up to 32768, then saturates to 32767 — this is an overflow|
+| −8388608   | −32768 | 0   | −32768           | exactly the minimum representable value — this is NOT an overflow, `ovf` stays unchanged |
 
-A common bug is to first latch the accumulator snapshot into an
-intermediate register, and only compute rounding/saturation (and assert
-`res_valid`) in a *following* cycle. This silently adds a second cycle of
-latency and desyncs `res_valid` from `res`: `res_valid` ends up pulsing
-one cycle before `res` actually holds the corresponding value, instead of
-the cycle where it does. `res` and `res_valid` must be driven by the same
-one-cycle-delayed condition on `rd`, updated together in the same cycle.
-
-Before finalizing your implementation, trace the path from `rd` to
-`res_valid` for a single `rd` pulse and confirm it takes exactly one
-cycle, and check that back-to-back `rd` pulses each produce their own
-correctly-timed `res`/`res_valid` pair.
+**One-cycle readout latency:** The full readout path — from sampling
+`rd` to `res_valid` pulsing — must add exactly one clock cycle of
+latency. If `rd` is sampled at cycle *N*, `res_valid` must be 1 and
+`res` must hold the correct rounded/saturated value at cycle *N+1*,
+never *N+2* or later.
 
 ## 5. Overflow flag
 
