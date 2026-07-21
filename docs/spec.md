@@ -110,7 +110,13 @@ never *N+2* or later.
   clears the flag only when no saturating readout lands that same cycle.
 - A readout that does not saturate leaves `ovf` unchanged. `res` always
   carries the clamped value; saturation is signaled only via `ovf`.
-- `res`, `res_valid`, and `ovf` must all be updated together on the same clock edge.
+- **Sticky behavior:** Once set by a saturating readout, `ovf` remains 1 
+  until explicitly cleared by `clr` or `rst`. Non-saturating readouts 
+  do not clear `ovf`.
+- **Synchronous update:** `res`, `res_valid`, and `ovf` must all be updated 
+  together on the same clock edge. When `res_valid` pulses high, `ovf` 
+  reflects the cumulative saturation history (all readouts up to and 
+  including the current one)
 
 ## 6. Reset
 
