@@ -69,9 +69,13 @@ snapshot. A `clr` asserted in the same cycle as `rd` clears the accumulator
 - `q + 1` if `r > 128`;
 - on a tie (`r == 128`): `q` if `q` is even, else `q + 1`.
 
-Note that the tie-break checks the parity of q itself, not the parity of the 
-final rounded result — since q and q+1 always have opposite parity, checking 
-q's low bit is sufficient.
+Check the parity of `q`, not of the post-increment value. When `r == 128` 
+(an exact tie), the round direction must be decided by testing `q[0]` 
+— the low bit of `q` itself, before any +1 adjustment. Do not compute the 
+post-increment value (`q + 1`) first and then inspect its parity.This works 
+because `q` and `q + 1` always have opposite parity: if `q` is even, 
+`q` is already the even choice; if `q` is odd, `q + 1` is the even choice. 
+So testing `q[0]` directly is sufficient.
 
 **Saturation — applied after rounding.** The rounded value is then clamped
 to the signed 16-bit range `[−32768, +32767]`. Note the order: rounding is
