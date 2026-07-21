@@ -15,7 +15,7 @@ active-high.
 | `rst`       | in  | `logic`           | Synchronous, active-high reset.                  |
 | `en`        | in  | `logic`           | Accumulate `a*b` this cycle.                     |
 | `clr`       | in  | `logic`           | Clear the accumulator this cycle.                |
-| `rd`        | in  | `logic`           | Request a readout snapshot this cycle.           |
+| `rd`        | in  | `logic`           | Request a readout accumulator value this cycle.           |
 | `a`         | in  | `logic signed [7:0]`  | Multiplicand.                                |
 | `b`         | in  | `logic signed [7:0]`  | Multiplier.                                  |
 | `res`       | out | `logic signed [15:0]` | Rounded + saturated readout result (registered). |
@@ -41,7 +41,7 @@ Accumulator update at each rising edge (with `rst = 0`):
 | 1     | 0    | `0`              |
 | 1     | 1    | `p` — clear-then-accumulate: the accumulator becomes the new product alone |
 
-The grading testbench guarantees the snapshot never exceeds the
+The grading testbench guarantees the accumulator value never exceeds the
 signed 28-bit range, so accumulator wrap behavior is unspecified and need
 not be handled.
 
@@ -52,24 +52,26 @@ treated the same as `clr=1, en=0`.
 
 ## 4. Readout path
 
-Asserting `rd` in cycle *t* requests a snapshot readout.
+Asserting `rd` in cycle *t* requests a accumulator value readout.
 
 **Snapshot value.** The snapshot is the accumulator value as it stood at
 the end of cycle *t−1* — that is, **before** any accumulator update
 (`en`/`clr`) occurring in cycle *t*. An `en` asserted in the same cycle as
 `rd` still updates the accumulator normally; it is simply not part of that
 snapshot. A `clr` asserted in the same cycle as `rd` clears the accumulator
-**after** the snapshot is taken (the readout returns the pre-clear value).
-The snapshot is a value used only to define the readout behavior. It does not 
-represent any additional architectural state, storage element, or pipeline.
+**after** the accumulator value is taken (the readout returns the pre-clear value).
 
 **Rounding — round-half-to-even at the 8 LSBs.** Let
-`q = floor(snapshot / 256)` and `r = snapshot − 256·q`, so that
-`0 ≤ r ≤ 255` — including for negative snapshots. The rounded value is:
+`q = floor(accumulator value / 256)` and `r =  snapshot − 256·q`, so that
+`0 ≤ r ≤ 255` — including for negative accumulator values. The rounded value is:
 
 - `q` if `r < 128`;
 - `q + 1` if `r > 128`;
 - on a tie (`r == 128`): `q` if `q` is even, else `q + 1`.
+
+Note that the tie-break checks the parity of q itself, not the parity of the 
+final rounded result — since q and q+1 always have opposite parity, checking 
+q's low bit is sufficient.
 
 **Saturation — applied after rounding.** The rounded value is then clamped
 to the signed 16-bit range `[−32768, +32767]`. Note the order: rounding is
@@ -78,14 +80,14 @@ saturation applies to the **rounded** value.
 
 **Registration and hold.** `res` and `res_valid` are registered outputs. In
 cycle *t+1*, `res_valid` is 1 and `res` carries the rounded, saturated
-snapshot. `res_valid` is exactly one cycle wide per `rd`. Between readouts,
+accumulator value. `res_valid` is exactly one cycle wide per `rd`. Between readouts,
 `res` **holds** its last value; it does not clear when `res_valid` is low.
-Back-to-back `rd` cycles are permitted and each takes its own snapshot.
+Back-to-back `rd` cycles are permitted and each takes its own accumulator value.
 
-Worked examples (`snapshot → res`):
+Worked examples (`accumulator value → res`):
 
 
-| snapshot   | q      | r   | res              | note                                          |
+| accumulator value   | q      | r   | res              | note                                          |
 |------------|--------|-----|------------------|-------------------------------------------------|
 | 640        | 2      | 128 | 2                | tie, q even → stays                            |
 | 896        | 3      | 128 | 4                | tie, q odd → rounds up                         |
@@ -93,17 +95,17 @@ Worked examples (`snapshot → res`):
 | 8388480    | 32767  | 128 | 32767            | tie, q odd → rounds up to 32768, then saturates to 32767 — this is an overflow|
 | −8388608   | −32768 | 0   | −32768           | exactly the minimum representable value — this is NOT an overflow, `ovf` stays unchanged |
 
-**One-cycle readout latency:** If `rd` is sampled high on the rising
-edge of `clk` in cycle *N*, `res_valid` must pulse high for exactly one
-cycle in cycle *N+1*, and `res` must simultaneously present the
-corresponding rounded and saturated accumulator value. The readout must
-never occur later than cycle *N+1*.
+**One-cycle readout latency:** The full readout path — from sampling
+`rd` to `res_valid` pulsing — must add exactly one clock cycle of
+latency. If `rd` is sampled at cycle *N*, `res_valid` must be 1 and
+`res` must hold the correct rounded/saturated value at cycle *N+1*,
+never *N+2* or later.
 
 ## 5. Overflow flag
 
 `ovf` is a registered, sticky flag:
 
-- **Set** whenever a readout saturates (the rounded snapshot fell outside
+- **Set** whenever a readout saturates (the rounded accumulator value fell outside
   `[−32768, 32767]`). The flag update lands in the same cycle as the
   corresponding `res_valid`.
 - **Cleared** only by `clr` (or `rst`).
