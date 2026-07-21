@@ -60,6 +60,8 @@ the end of cycle *t−1* — that is, **before** any accumulator update
 `rd` still updates the accumulator normally; it is simply not part of that
 snapshot. A `clr` asserted in the same cycle as `rd` clears the accumulator
 **after** the snapshot is taken (the readout returns the pre-clear value).
+The snapshot is a value used only to define the readout behavior. It does not 
+represent any additional architectural state, storage element, or pipeline.
 
 **Rounding — round-half-to-even at the 8 LSBs.** Let
 `q = floor(snapshot / 256)` and `r = snapshot − 256·q`, so that
@@ -110,13 +112,6 @@ never *N+2* or later.
   clears the flag only when no saturating readout lands that same cycle.
 - A readout that does not saturate leaves `ovf` unchanged. `res` always
   carries the clamped value; saturation is signaled only via `ovf`.
-- **Sticky behavior:** Once set by a saturating readout, `ovf` remains 1 
-  until explicitly cleared by `clr` or `rst`. Non-saturating readouts 
-  do not clear `ovf`.
-- **Synchronous update:** `res`, `res_valid`, and `ovf` must all be updated 
-  together on the same clock edge. When `res_valid` pulses high, `ovf` 
-  reflects the cumulative saturation history (all readouts up to and 
-  including the current one)
 
 ## 6. Reset
 
