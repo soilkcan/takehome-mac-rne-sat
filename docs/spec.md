@@ -127,18 +127,6 @@ to 0.
 - No SystemVerilog Assertions (SVA).
 - Do not change the module name, port names, directions, or widths.
 - Single clock domain. No latches.
-- **Do not leave any skeleton tie-off assignments** (e.g. `assign res =
-  '0;`) in the final implementation — every output must be driven by real
-  logic implementing the behavior above.
-- **Every output must have exactly one driver.** Do not mix, e.g., a
-  continuous `assign` and a register write to the same signal, and do not
-  drive any output from more than one `always` block.
-- **Do not add extra pipeline stages, extra latency cycles, or speculative
-  buffering anywhere.** The design has exactly the latency described in
-  §4.1 and nowhere else.
-- The implementation must be **cycle-accurate**: every table and timing
-  diagram in this spec describes exact per-cycle behavior expected by the
-  grading testbench, not an approximation.
 
 ## 8. Verification checklist
 
