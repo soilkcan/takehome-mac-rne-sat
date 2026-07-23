@@ -96,19 +96,11 @@ Worked examples (`accumulator value → res`):
 | 8388480    | 32767  | 128 | 32767            | tie, q odd → rounds up to 32768, then saturates to 32767 — this is an overflow|
 | −8388608   | −32768 | 0   | −32768           | exactly the minimum representable value — this is NOT an overflow, `ovf` stays unchanged |
 
-**One-cycle readout latency (critical).** Sampling `rd` at cycle *N*
-must produce `res_valid = 1` (and the matching `res`) at cycle *N+1*
-only. Latency of *N+2* or more is incorrect.
-
-Correct shape: capture the snapshot / round / saturate into the
-`res` register, and set `res_valid` from the *same* sampled `rd` in
-that same edge — i.e. `res_valid` next-state is the `rd` sampled this
-cycle (one register stage after `rd`).
-
-Incorrect shape (common mistake): registering `rd` into an
-intermediate flag (`rd_q`, `rd_seen`, `snapshot_valid`, …) and then
-registering `res_valid` from that flag. That is two flip-flop stages
-and yields `res_valid` at *N+2*. Do not do this.
+**One-cycle readout latency (Critical):** The full readout 
+path — from sampling `rd` to `res_valid` pulsing — must add exactly 
+one clock cycle of latency. If `rd` is sampled at cycle *N*, 
+`res_valid` must be 1 and `res` must hold the correct rounded/saturated 
+value at cycle *N+1*, never *N+2* or later.
 
 Cycle timing:
 
@@ -145,41 +137,3 @@ to 0.
 - Do not change the module name, port names, directions, or widths.
 - Single clock domain. No latches.
 
-## 8. Verification checklist
-
-Before considering the implementation complete, verify each of the
-following scenarios against the rules above:
-
-- [ ] **Reset:** `rst` asserted clears `acc`, `res`, `res_valid`, and `ovf`
-      to 0, regardless of other inputs.
-- [ ] **Accumulate:** `en=1`, `clr=0` adds the signed product `a*b` into
-      `acc` on the next edge.
-- [ ] **Clear:** `clr=1`, `en=0` zeroes `acc` on the next edge.
-- [ ] **Clear + enable together:** `clr=1`, `en=1` sets `acc` to the new
-      product alone (not the product added to zero-then-something-else —
-      just the plain product).
-- [ ] **Readout with concurrent update:** `rd=1` together with `en=1` (or
-      `clr=1`) in the same cycle — snapshot must reflect the accumulator
-      value *before* that cycle's update, per §4.1.
-- [ ] **Back-to-back readouts:** two or more consecutive `rd=1` cycles each
-      produce their own correctly-timed one-cycle `res_valid` pulse and
-      correct snapshot.
-- [ ] **Maximum positive accumulator values:** snapshot values near
-      `+32767 * 256` and above, to exercise rounding and saturation at the
-      positive boundary.
-- [ ] **Maximum negative accumulator values:** snapshot values near
-      `−32768 * 256` and below, to exercise rounding and saturation at the
-      negative boundary.
-- [ ] **Rounding boundaries:** remainders of exactly 127, 128, and 129
-      (i.e. just below, exactly at, and just above the tie point), for both
-      positive and negative snapshots, and for both even and odd `q`.
-- [ ] **Saturation boundaries:** rounded values exactly at `+32767`/`−32768`
-      (no saturation, flag unchanged) versus one step beyond (`+32768`/
-      `−32769`, saturation triggers, flag sets).
-- [ ] **Overflow sticky behavior:** `ovf` remains set across later
-      non-saturating readouts and non-`clr` cycles, is cleared only by
-      `clr` (or `rst`), and — when a saturating readout coincides with
-      `clr` — remains set (saturation priority), per §5.1.
-- [ ] **Readout latency:** with `rd=1` only in cycle N, `res_valid`
-      is 1 in cycle N+1 and 0 in cycle N+2 (not delayed by an extra
-      pipeline stage).
