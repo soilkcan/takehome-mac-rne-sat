@@ -95,11 +95,27 @@ Worked examples (`accumulator value → res`):
 | 8388480    | 32767  | 128 | 32767            | tie, q odd → rounds up to 32768, then saturates to 32767 — this is an overflow|
 | −8388608   | −32768 | 0   | −32768           | exactly the minimum representable value — this is NOT an overflow, `ovf` stays unchanged |
 
-**One-cycle readout latency:** The full readout path — from sampling
-`rd` to `res_valid` pulsing — must add exactly one clock cycle of
-latency. If `rd` is sampled at cycle *N*, `res_valid` must be 1 and
-`res` must hold the correct rounded/saturated value at cycle *N+1*,
-never *N+2* or later.
+**One-cycle readout latency (critical).** Sampling `rd` at cycle *N*
+must produce `res_valid = 1` (and the matching `res`) at cycle *N+1*
+only. Latency of *N+2* or more is incorrect.
+
+Correct shape: capture the snapshot / round / saturate into the
+`res` register, and set `res_valid` from the *same* sampled `rd` in
+that same edge — i.e. `res_valid` next-state is the `rd` sampled this
+cycle (one register stage after `rd`).
+
+Incorrect shape (common mistake): registering `rd` into an
+intermediate flag (`rd_q`, `rd_seen`, `snapshot_valid`, …) and then
+registering `res_valid` from that flag. That is two flip-flop stages
+and yields `res_valid` at *N+2*. Do not do this.
+
+Cycle timing:
+
+| cycle | `rd` | `res_valid` | `res`                          |
+|-------|------|-------------|--------------------------------|
+| N     | 1    | 0           | previous held value            |
+| N+1   | 0    | 1           | rounded/saturated snapshot     |
+| N+2   | 0    | 0           | holds value from N+1           |
 
 ## 5. Overflow flag
 
@@ -163,3 +179,6 @@ following scenarios against the rules above:
       non-saturating readouts and non-`clr` cycles, is cleared only by
       `clr` (or `rst`), and — when a saturating readout coincides with
       `clr` — remains set (saturation priority), per §5.1.
+- [ ] **Readout latency:** with `rd=1` only in cycle N, `res_valid`
+      is 1 in cycle N+1 and 0 in cycle N+2 (not delayed by an extra
+      pipeline stage).
