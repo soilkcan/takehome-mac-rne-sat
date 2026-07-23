@@ -92,6 +92,7 @@ Worked examples (`accumulator value → res`):
 | 640        | 2      | 128 | 2                | tie, q even → stays                            |
 | 896        | 3      | 128 | 4                | tie, q odd → rounds up                         |
 | −384       | −2     | 128 | −2               | tie, q even → stays                            |
+| −640       | −3     | 128 | −2               | tie, q odd → rounds up                            |
 | 8388480    | 32767  | 128 | 32767            | tie, q odd → rounds up to 32768, then saturates to 32767 — this is an overflow|
 | −8388608   | −32768 | 0   | −32768           | exactly the minimum representable value — this is NOT an overflow, `ovf` stays unchanged |
 
