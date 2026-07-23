@@ -127,3 +127,39 @@ to 0.
 - No SystemVerilog Assertions (SVA).
 - Do not change the module name, port names, directions, or widths.
 - Single clock domain. No latches.
+
+## 8. Verification checklist
+
+Before considering the implementation complete, verify each of the
+following scenarios against the rules above:
+
+- [ ] **Reset:** `rst` asserted clears `acc`, `res`, `res_valid`, and `ovf`
+      to 0, regardless of other inputs.
+- [ ] **Accumulate:** `en=1`, `clr=0` adds the signed product `a*b` into
+      `acc` on the next edge.
+- [ ] **Clear:** `clr=1`, `en=0` zeroes `acc` on the next edge.
+- [ ] **Clear + enable together:** `clr=1`, `en=1` sets `acc` to the new
+      product alone (not the product added to zero-then-something-else —
+      just the plain product).
+- [ ] **Readout with concurrent update:** `rd=1` together with `en=1` (or
+      `clr=1`) in the same cycle — snapshot must reflect the accumulator
+      value *before* that cycle's update, per §4.1.
+- [ ] **Back-to-back readouts:** two or more consecutive `rd=1` cycles each
+      produce their own correctly-timed one-cycle `res_valid` pulse and
+      correct snapshot.
+- [ ] **Maximum positive accumulator values:** snapshot values near
+      `+32767 * 256` and above, to exercise rounding and saturation at the
+      positive boundary.
+- [ ] **Maximum negative accumulator values:** snapshot values near
+      `−32768 * 256` and below, to exercise rounding and saturation at the
+      negative boundary.
+- [ ] **Rounding boundaries:** remainders of exactly 127, 128, and 129
+      (i.e. just below, exactly at, and just above the tie point), for both
+      positive and negative snapshots, and for both even and odd `q`.
+- [ ] **Saturation boundaries:** rounded values exactly at `+32767`/`−32768`
+      (no saturation, flag unchanged) versus one step beyond (`+32768`/
+      `−32769`, saturation triggers, flag sets).
+- [ ] **Overflow sticky behavior:** `ovf` remains set across later
+      non-saturating readouts and non-`clr` cycles, is cleared only by
+      `clr` (or `rst`), and — when a saturating readout coincides with
+      `clr` — remains set (saturation priority), per §5.1.
