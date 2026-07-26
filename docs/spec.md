@@ -102,14 +102,6 @@ one clock cycle of latency. If `rd` is sampled at cycle *N*,
 `res_valid` must be 1 and `res` must hold the correct rounded/saturated 
 value at cycle *N+1*, never *N+2* or later.
 
-Cycle timing:
-
-| cycle | `rd` | `res_valid` | `res`                          |
-|-------|------|-------------|--------------------------------|
-| N     | 1    | 0           | previous held value            |
-| N+1   | 0    | 1           | rounded/saturated snapshot     |
-| N+2   | 0    | 0           | holds value from N+1           |
-
 ## 5. Overflow flag
 
 `ovf` is a registered, sticky flag:
