@@ -7,133 +7,165 @@ saturated readout port and a sticky overflow flag. All behavior is
 synchronous to the rising edge of `clk`. Reset is synchronous and
 active-high.
 
-## 2. Interface
+## 2. Design Contract (read first)
 
-| Port        | Dir | Type              | Description                                      |
-|-------------|-----|-------------------|--------------------------------------------------|
-| `clk`       | in  | `logic`           | Clock. All sequential behavior on the rising edge. |
-| `rst`       | in  | `logic`           | Synchronous, active-high reset.                  |
-| `en`        | in  | `logic`           | Accumulate `a*b` this cycle.                     |
-| `clr`       | in  | `logic`           | Clear the accumulator this cycle.                |
-| `rd`        | in  | `logic`           | Request a readout accumulator value this cycle.           |
-| `a`         | in  | `logic signed [7:0]`  | Multiplicand.                                |
-| `b`         | in  | `logic signed [7:0]`  | Multiplier.                                  |
-| `res`       | out | `logic signed [15:0]` | Rounded + saturated readout result (registered). |
-| `res_valid` | out | `logic`           | One-cycle pulse, exactly one cycle after each `rd`. |
-| `ovf`       | out | `logic`           | Sticky saturation flag (registered).             |
+This block is defined by a fixed contract. Each driven output has a
+declared **logic class**, a **source** (what its next value is computed
+from), and a **latency** measured from the cycle an input is sampled.
 
-All control inputs (`en`, `clr`, `rd`) are sampled on every rising edge and
-may be asserted in any combination. `a` and `b` are consumed only on cycles
-where the accumulator takes a product (see §3).
+| Output      | Logic class        | Next-state source                         | Latency from `rd` |
+|-------------|--------------------|-------------------------------------------|-------------------|
+| `res`       | registered (seq)   | rounded+saturated snapshot, loaded when `rd`=1 | 1 cycle       |
+| `res_valid` | registered (seq)   | **the `rd` sampled this cycle** (one flip-flop) | 1 cycle       |
+| `ovf`       | registered, sticky | saturation of the same readout            | aligned with `res_valid` |
+| `acc`       | registered (seq)   | §4 table                                  | n/a               |
 
-## 3. Accumulator
+Contract rules (each is checkable):
 
-The internal accumulator `acc` is a 28-bit signed two's-complement register.
-The product `p = a * b` is a signed 16-bit value, sign-extended to 28 bits
-before use.
+- **R1** `res_valid` is exactly **one flip-flop after `rd`**. Its
+  next-state equals the `rd` sampled on the current edge. There is **no
+  intermediate `rd`-capture register** (`rd_q`, `rd_seen`, …) on this path.
+- **R2** `res` loads the rounded/saturated snapshot on the same edge that
+  sets `res_valid`; both appear at cycle *N+1* for an `rd` at *N*.
+- **R3** `ovf` updates on the **same edge** as its `res_valid` (never one
+  cycle later).
+- **R4** All four `{clr, en}` combinations produce distinct `acc`
+  next-states (§4).
+- **R5** Snapshot is the **pre-update** accumulator value (§5).
 
-Accumulator update at each rising edge (with `rst = 0`):
+## 3. Interface
 
-| `clr` | `en` | `acc` next value |
-|-------|------|------------------|
-| 0     | 0    | `acc` (hold)     |
-| 0     | 1    | `acc + p`        |
-| 1     | 0    | `0`              |
-| 1     | 1    | `p` — clear-then-accumulate: the accumulator becomes the new product alone |
+| Port        | Dir | Type                  | Logic class | Latency        | Description                                  |
+|-------------|-----|-----------------------|-------------|----------------|----------------------------------------------|
+| `clk`       | in  | `logic`               | —           | —              | Clock; all sequential behavior on rising edge. |
+| `rst`       | in  | `logic`               | —           | —              | Synchronous, active-high reset.              |
+| `en`        | in  | `logic`               | —           | —              | Accumulate `a*b` this cycle.                 |
+| `clr`       | in  | `logic`               | —           | —              | Clear the accumulator this cycle.            |
+| `rd`        | in  | `logic`               | —           | —              | Request an accumulator readout this cycle.   |
+| `a`         | in  | `logic signed [7:0]`  | —           | —              | Multiplicand.                                |
+| `b`         | in  | `logic signed [7:0]`  | —           | —              | Multiplier.                                  |
+| `res`       | out | `logic signed [15:0]` | registered  | `rd`+1         | Rounded + saturated readout result.          |
+| `res_valid` | out | `logic`               | registered  | `rd`+1, 1-wide | One-cycle pulse, one flip-flop after `rd`.   |
+| `ovf`       | out | `logic`               | registered  | with `res_valid` | Sticky saturation flag.                    |
 
-The grading testbench guarantees the accumulator value never exceeds the
-signed 28-bit range, so accumulator wrap behavior is unspecified and need
-not be handled.
+Control inputs (`en`, `clr`, `rd`) are sampled every rising edge and may be
+asserted in any combination. `a`/`b` are consumed only on cycles where the
+accumulator takes a product (§4 table).
 
-`clr` and `en` are independent bits — all four combinations of
-`{clr, en}` must produce distinct `acc` next-state behavior, exactly as
-given in the table above. In particular, `clr=1, en=1` must not be
-treated the same as `clr=1, en=0`.
+## 4. Accumulator
 
-## 4. Readout path
+`acc` is a 28-bit signed two's-complement register. The product
+`p = a * b` is a signed 16-bit value, sign-extended to 28 bits before use.
 
-Asserting `rd` in cycle *t* requests a accumulator value readout.
+Next-state at each rising edge (`rst = 0`):
 
-**Snapshot value.** The snapshot is the accumulator value as it stood at
-the end of cycle *t−1* — that is, **before** any accumulator update
-(`en`/`clr`) occurring in cycle *t*. An `en` asserted in the same cycle as
-`rd` still updates the accumulator normally; it is simply not part of that
-snapshot. A `clr` asserted in the same cycle as `rd` clears the accumulator
-**after** the accumulator value is taken (the readout returns the pre-clear value).
+| `clr` | `en` | `acc` next value                                            |
+|-------|------|-------------------------------------------------------------|
+| 0     | 0    | `acc` (hold)                                                |
+| 0     | 1    | `acc + p`                                                   |
+| 1     | 0    | `0`                                                         |
+| 1     | 1    | `p` (clear-then-accumulate: accumulator becomes the product alone) |
 
-**Rounding — round-half-to-even at the 8 LSBs.** Let
-`q = floor(accumulator value / 256)` and `r =  snapshot − 256·q`, so that
-`0 ≤ r ≤ 255` — including for negative accumulator values. The rounded value is:
+The grading testbench guarantees `acc` never exceeds signed 28-bit range;
+wrap behavior is unspecified. Per **R4**, `clr=1,en=1` must not equal
+`clr=1,en=0`.
 
-- `q` if `r < 128`;
-- `q + 1` if `r > 128`;
-- on a tie (`r == 128`): `q` if `q` is even, else `q + 1`.
+## 5. Readout path
 
-Note that the tie-break checks the parity of `q` itself, not the parity of
-the final rounded result — since `q` and `q+1` always have opposite parity,
-checking `q`'s low bit is sufficient.
+`rd` in cycle *t* requests a readout.
 
-**Saturation — applied after rounding.** The rounded value is then clamped
-to the signed 16-bit range `[−32768, +32767]`. Note the order: rounding is
-performed first and may itself carry the value out of the 16-bit range;
-saturation applies to the **rounded** value.
+### 5.1 Snapshot (per R5)
 
-**Registration and hold.** `res` and `res_valid` are registered outputs. In
-cycle *t+1*, `res_valid` is 1 and `res` carries the rounded, saturated
-accumulator value. `res_valid` is exactly one cycle wide per `rd`. Between readouts,
-`res` **holds** its last value; it does not clear when `res_valid` is low.
-Back-to-back `rd` cycles are permitted and each takes its own accumulator value.
+The snapshot is `acc` as it stood at the **end of cycle *t−1***, i.e.
+**before** any `en`/`clr` update in cycle *t*.
 
-Worked examples (`accumulator value → res`):
+| Same-cycle input | Effect on this readout                                   |
+|------------------|----------------------------------------------------------|
+| `en=1` with `rd` | `acc` still updates normally; update is **not** in snapshot |
+| `clr=1` with `rd`| readout returns the **pre-clear** value; clear applies after |
 
+### 5.2 Rounding — round-half-to-even at the 8 LSBs
 
-| accumulator value   | q      | r   | res              | note                                          |
-|------------|--------|-----|------------------|-------------------------------------------------|
-| 640        | 2      | 128 | 2                | tie, q even → stays                            |
-| 896        | 3      | 128 | 4                | tie, q odd → rounds up                         |
-| −384       | −2     | 128 | −2               | tie, q even → stays                            |
-| −640       | −3     | 128 | −2               | tie, q odd → rounds up                            |
-| 8388480    | 32767  | 128 | 32767            | tie, q odd → rounds up to 32768, then saturates to 32767 — this is an overflow|
-| −8388608   | −32768 | 0   | −32768           | exactly the minimum representable value — this is NOT an overflow, `ovf` stays unchanged |
+Let `q = floor(acc / 256)` and `r = snapshot − 256·q`, so `0 ≤ r ≤ 255`
+(including for negative `acc` — arithmetic right shift already gives
+`q = acc >>> 8`, `r = acc[7:0]`; do **not** apply a second negative
+adjustment).
 
-**One-cycle readout latency (Critical):** The full readout 
-path — from sampling `rd` to `res_valid` pulsing — must add exactly 
-one clock cycle of latency. If `rd` is sampled at cycle *N*, 
-`res_valid` must be 1 and `res` must hold the correct rounded/saturated 
-value at cycle *N+1*, never *N+2* or later.
+| Condition   | Rounded value |
+|-------------|---------------|
+| `r < 128`   | `q`           |
+| `r > 128`   | `q + 1`       |
+| `r == 128`  | `q` if `q` even, else `q + 1` |
 
-Cycle timing:
+The tie-break checks the parity of `q` (not the final result).
 
-| cycle | `rd` | `res_valid` | `res`                          |
-|-------|------|-------------|--------------------------------|
-| N     | 1    | 0           | previous held value            |
-| N+1   | 0    | 1           | rounded/saturated snapshot     |
-| N+2   | 0    | 0           | holds value from N+1           |
+### 5.3 Saturation — after rounding
 
-## 5. Overflow flag
+Clamp the **rounded** value to signed 16-bit `[−32768, +32767]`. Order
+matters: rounding may itself exceed the range; saturation applies to the
+rounded value.
 
-`ovf` is a registered, sticky flag:
+### 5.4 Worked examples (`acc → res`) — full tie/saturation coverage
 
-- **Set** whenever a readout saturates (the rounded accumulator value fell outside
-  `[−32768, 32767]`). The flag update lands in the same cycle as the
-  corresponding `res_valid`.
-- **Cleared** only by `clr` (or `rst`).
-- **Same-cycle priority:** if a saturating readout coincides with `clr` in
-  the same cycle, the set wins — `ovf` is 1 in the following cycle. `clr`
-  clears the flag only when no saturating readout lands that same cycle.
-- A readout that does not saturate leaves `ovf` unchanged. `res` always
-  carries the clamped value; saturation is signaled only via `ovf`.
+| `acc`     | `q`     | `r` | `res`  | class                                                    |
+|-----------|---------|-----|--------|----------------------------------------------------------|
+| 640       | 2       | 128 | 2      | +, tie, `q` even → stays                                 |
+| 896       | 3       | 128 | 4      | +, tie, `q` odd → up                                     |
+| −384      | −2      | 128 | −2     | −, tie, `q` even → stays                                 |
+| −640      | −3      | 128 | −2     | −, tie, `q` odd → up (**not** −4)                        |
+| 8388480   | 32767   | 128 | 32767  | +, tie, `q` odd → 32768 then saturates → overflow        |
+| −8388608  | −32768  | 0   | −32768 | exact minimum — **not** an overflow, `ovf` unchanged     |
 
-## 6. Reset
+### 5.5 Readout timing (per R1/R2)
 
-`rst` is synchronous and active-high, and overrides `en`/`clr`/`rd`. On a
-rising edge with `rst = 1`: `acc`, `res`, `res_valid`, and `ovf` all clear
-to 0.
+For an `rd` sampled at cycle *N*, `res_valid` and `res` appear at *N+1*
+only — never *N+2*. `res_valid` is one flip-flop after `rd` (no extra
+capture stage). Between readouts, `res` **holds**; it does not clear when
+`res_valid` is low. Back-to-back `rd` cycles each take their own snapshot.
 
-## 7. Implementation constraints
+| cycle | `rd` | `res_valid` | `res`                      |
+|-------|------|-------------|----------------------------|
+| N     | 1    | 0           | previous held value        |
+| N+1   | 0    | 1           | rounded/saturated snapshot |
+| N+2   | 0    | 0           | holds value from N+1       |
+
+## 6. Overflow flag
+
+`ovf` is registered and sticky:
+
+| Event                                   | `ovf` next value                         |
+|-----------------------------------------|------------------------------------------|
+| Readout saturates                       | 1 (set, same edge as its `res_valid` — R3) |
+| Readout does not saturate               | unchanged                                |
+| `clr` (or `rst`), no saturating readout | 0                                        |
+| Saturating readout **and** `clr` same cycle | 1 (set wins)                         |
+
+`res` always carries the clamped value; saturation is signaled only via
+`ovf`.
+
+## 7. Reset
+
+`rst` is synchronous, active-high, and overrides `en`/`clr`/`rd`. On a
+rising edge with `rst = 1`: `acc`, `res`, `res_valid`, and `ovf` clear to 0.
+
+## 8. Implementation constraints
 
 - Synthesizable SystemVerilog, compatible with Icarus Verilog (`-g2012`).
 - No SystemVerilog Assertions (SVA).
 - Do not change the module name, port names, directions, or widths.
 - Single clock domain. No latches.
 
+## 9. Verification checklist
+
+- [ ] **Readout latency (R1/R2):** `rd` only at N ⇒ `res_valid`=1 at N+1
+      and 0 at N+2; no intermediate `rd`-capture register.
+- [ ] **`ovf` alignment (R3):** flag updates on the same edge as its
+      `res_valid`.
+- [ ] **`{clr,en}` (R4):** all four combinations distinct.
+- [ ] **Snapshot (R5):** pre-update value; `en`/`clr` in the `rd` cycle
+      excluded from the snapshot.
+- [ ] **Rounding:** `r` = 127/128/129 for +/− and even/odd `q`; negative
+      floor uses `acc>>>8` with no second adjustment.
+- [ ] **Saturation:** rounded value exactly ±boundary vs one step beyond.
+- [ ] **Sticky `ovf`:** holds across non-saturating readouts; cleared only
+      by `clr`/`rst`; set wins on same-cycle `clr`.
