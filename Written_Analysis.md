@@ -7,7 +7,7 @@ Trace after modifying spec: https://www.hud.ai/jobs/84f9661cd7bf45c6b14977877bda
 
 ### What went wrong
 **Readout Latency Bug.[Task 5c8deeb], [Task 6884079b], [Task 2aaf2962], [Task 04ef0f53], [Task 842aefd2], [Task 5f436941], [Task fec74f51], [Task dcd3d237], [Task 4c78fe78], [Task 3fa0f847]**  
-The agent's RTL appends an extra 1 clock cycle of latency between `rd` and `res_valid`/`res`, so readout has 1 clock cycle of latency. Agent uses `rd` register (`rd_reg <= rd`) and then drives `res_valid` from that register instead of from `rd` directly (`res_valid <= rd_reg`).
+The RTL adds one extra clock cycle of delay before `res_valid` and `res` become valid. Instead of connecting `res_valid` straight to `rd`, the design first copies `rd` into a new signal, `rd_reg` (`rd_reg <= rd`), and then sets `res_valid` from `rd_reg` (`res_valid <= rd_reg`).
 
 Tracing it cycle by cycle: `rd` is high at cycle T. On the clock edge closing cycle T, `rd_reg` is loaded with `rd`, so `rd_reg` becomes 1 only at cycle T+1. Then `res_valid <= rd_reg` is a second register write — it samples `rd_reg` and only updates `res_valid` on the *next* edge, at cycle T+2. So instead of `res_valid` rising at T+1 as the spec requires, it rises at T+2. Every readout is delayed by one extra cycle.
 
@@ -15,9 +15,9 @@ Tracing it cycle by cycle: `rd` is high at cycle T. On the clock edge closing cy
 
 ## B. Faulty Assumptions / Missed Insights
 
-The agent correctly implemented the accumulator update, including all four {clr, en} cases, and understood the rounding and saturation instructions. The main mistake was in the readout timing. It added an extra pipeline register for `rd`, causing the readout path to have two cycles of latency instead of the required one. The agent registered the inputs and it causes latency. The agent assumed that adding an extra pipeline stage in the readout path would not change the required behavior.
+Everything else in the design was done correctly: the accumulator logic for all four `{clr, en}` cases, the rounding, and the saturation all matched the spec. The only mistake was in the timing of the readout path.It added an extra pipeline register for `rd`, causing the readout path to have two cycles of latency instead of the required one. The agent registered the inputs and it causes latency. The agent assumed that adding an extra pipeline stage in the readout path would not change the required behavior.
 
-The agent appears to have confused the accumulator value that is available before a clock edge with the value that is updated by that same edge. As a result, it added an unnecessary pipeline stage and shifted the observable behavior by one clock cycle. This is a common off-by-one mistake in synchronous digital design, where the internal state update and the externally visible timing are not considered separately. A simple cycle-by-cycle timing analysis or waveform review would have made the extra latency obvious before finalizing the implementation.
+What actually happened is that the agent lost track of timing: it assumed `rd_reg` already matched `rd` within the same cycle, but a register only picks up the new value on the next clock edge, not immediately. Because of that wrong assumption, stacking a second register didn't look risky — but each register adds its own cycle of delay. This kind of mistake is common in synchronous design: confusing a signal's current value with the value it will hold after the next edge. Tracing the design cycle by cycle, rather than just describing what it was supposed to do, would have surfaced this immediately.
 
 ## C. Prompt Modifications
 
